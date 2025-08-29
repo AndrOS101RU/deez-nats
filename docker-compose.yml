@@ -1,0 +1,104 @@
+services:
+    n1:
+        image: nats:2.10-alpine
+        command: ['-c', '/etc/nats/n1.conf', '-js']
+        volumes:
+            - ./infra/nats/n1.conf:/etc/nats/n1.conf:ro
+            - n1:/data
+        ports:
+            - '4222:4222' # client
+            - '8222:8222' # monitoring
+        healthcheck:
+            test: ['CMD', 'curl', '-f', 'http://localhost:8222/healthz']
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+
+    n2:
+        image: nats:2.10-alpine
+        command: ['-c', '/etc/nats/n2.conf', '-js']
+        volumes:
+            - ./infra/nats/n2.conf:/etc/nats/n2.conf:ro
+            - n2:/data
+        ports:
+            - '4223:4223'
+            - '8223:8223'
+
+    n3:
+        image: nats:2.10-alpine
+        command: ['-c', '/etc/nats/n3.conf', '-js']
+        volumes:
+            - ./infra/nats/n3.conf:/etc/nats/n3.conf:ro
+            - n3:/data
+        ports:
+            - '4224:4224'
+            - '8224:8224'
+
+    # one-off init to create streams/consumers
+    nats-init:
+        image: natsio/nats-box:latest
+        depends_on: [n1, n2, n3]
+        environment:
+            - NATS_URL=nats://n1:4222,nats://n2:4223,nats://n3:4224
+        volumes:
+            - ./infra/scripts/create_streams.sh:/create_streams.sh
+            - ./infra/nats/seed.sh:/seed.sh
+        entrypoint: ['/bin/sh', '-c']
+        command: |
+            "chmod +x /seed.sh /create_streams.sh && /seed.sh && /create_streams.sh"
+
+    postgres:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: app
+            POSTGRES_PASSWORD: app
+            POSTGRES_DB: app
+        volumes:
+            - pg:/var/lib/postgresql/data
+            - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+            - ./infra/postgres/postgres.conf:/etc/postgresql/postgresql.conf:ro
+        command: ['-c', 'config_file=/etc/postgresql/postgresql.conf']
+        ports:
+            - '5432:5432'
+
+    api:
+        build: ./services/api
+        environment:
+            - NATS_URL=nats://n1:4222,nats://n2:4223,nats://n3:4224
+            - NATS_CLUSTER_NAME=js-cluster
+            - POSTGRES_USER=app
+            - POSTGRES_PASSWORD=app
+            - POSTGRES_DB=app
+            - DATABASE_URL=postgresql://app:app@postgres:5432/app
+            - PORT=3000
+            - NODE_ENV=development
+            - LOG_LEVEL=info
+            - REQUEST_TIMEOUT_MS=5000
+            - NATS_TIMEOUT_MS=2000
+        depends_on: [postgres, n1, n2, n3]
+        ports:
+            - '3000:3000'
+        volumes:
+            - ./services/api/logs:/app/logs
+
+    worker-sql-batcher:
+        build: ./services/worker-sql-batcher
+        environment:
+            - NATS_URL=nats://n1:4222,nats://n2:4223,nats://n3:4224
+            - NATS_CLUSTER_NAME=js-cluster
+            - POSTGRES_USER=app
+            - POSTGRES_PASSWORD=app
+            - POSTGRES_DB=app
+            - DATABASE_URL=postgresql://app:app@postgres:5432/app
+            - NODE_ENV=development
+            - LOG_LEVEL=info
+            - BATCH_MAX=256
+            - BATCH_WINDOW_MS=15
+        depends_on: [postgres, n1, n2, n3, nats-init]
+
+volumes:
+    n1: {}
+    n2: {}
+    n3: {}
+    pg: {}
