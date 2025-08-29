@@ -1,6 +1,6 @@
 # Deez NATS - Microservices with NATS JetStream
 
-A template microservices architecture using NATS JetStream for message queuing, TypeScript for type safety, and PostgreSQL for data persistence with batched SQL processing.
+A template microservices architecture using NATS JetStream for message queuing and PostgreSQL for data persistence with batched SQL processing, written in TypeScript and ran on Docker.
 
 ## Features
 
